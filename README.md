@@ -132,3 +132,4 @@ vercel --prod
 - 仕様書原本：`/Users/koki/tabacolumn_prompt.md`（ファイル名は旧称のまま）
 - スキーマ：`supabase/schema.sql`
 - シード：`supabase/seed.sql`
+# テスト変更
