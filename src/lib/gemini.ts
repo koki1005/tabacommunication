@@ -100,3 +100,102 @@ export async function summarizeThreads(bodies: string[]): Promise<string> {
   ]);
   return res.response.text().trim();
 }
+
+export type MatchPick = { id: string; reason: string };
+
+const MATCH_PROMPT_SAKE = `あなたは一人暮らし大学生に酒を勧める優しい先輩です。
+ユーザーの回答と、候補銘柄リスト（id と特徴）を読み、最も合いそうな TOP3 を選び、
+それぞれ「なぜ合うか」を 60〜100 字で日本語で説明してください。
+
+ルール:
+- 候補リストにある id だけを使う。新しい id を作らない。
+- TOP3 を必ず3件返す（候補が3件未満なら全件）。
+- 押し売りせず、初心者でも安心できる温度で書く。
+- 健康・依存に踏み込み過ぎない。
+
+返却フォーマット（厳格JSON。コードブロック禁止）:
+{"picks": [{"id": "uuid", "reason": "..."}, ...]}
+`;
+
+const MATCH_PROMPT_TOBACCO = `あなたは一人暮らし大学生にタバコを勧める落ち着いた先輩です。
+ユーザーの回答と、候補銘柄リスト（id と特徴）を読み、最も合いそうな TOP3 を選び、
+それぞれ「なぜ合うか」を 60〜100 字で日本語で説明してください。
+
+ルール:
+- 候補リストにある id だけを使う。新しい id を作らない。
+- TOP3 を必ず3件返す（候補が3件未満なら全件）。
+- 「合う/合わない」の理由を端的に。依存・健康への過度な警告は不要。
+- 法律・年齢前提（20歳以上）は守る。未成年勧誘の文面にしない。
+
+返却フォーマット（厳格JSON。コードブロック禁止）:
+{"picks": [{"id": "uuid", "reason": "..."}, ...]}
+`;
+
+export async function matchRecommend(
+  target: "sake" | "tobacco",
+  answers: Record<string, string>,
+  candidates: Array<Record<string, unknown> & { id: string; name: string }>,
+): Promise<MatchPick[]> {
+  const model = getGemini().getGenerativeModel({
+    model: "gemini-2.0-flash",
+    generationConfig: { responseMimeType: "application/json" },
+  });
+  const prompt = target === "sake" ? MATCH_PROMPT_SAKE : MATCH_PROMPT_TOBACCO;
+  const res = await model.generateContent([
+    { text: prompt },
+    { text: `\nユーザー回答:\n${JSON.stringify(answers, null, 2)}` },
+    { text: `\n候補銘柄（id と特徴の配列）:\n${JSON.stringify(candidates, null, 2)}` },
+  ]);
+  const json = JSON.parse(res.response.text());
+  const picks = Array.isArray(json.picks) ? json.picks : [];
+  return picks
+    .filter((p: unknown): p is MatchPick =>
+      !!p && typeof (p as MatchPick).id === "string" && typeof (p as MatchPick).reason === "string",
+    )
+    .slice(0, 3);
+}
+
+export type ConsultResult = {
+  verdict: "アウト" | "グレー" | "セーフ";
+  reason: string;
+  laws: string;
+  one_liner: string;
+};
+
+const CONSULT_PROMPT = `あなたは日本の酒・タバコ周りの法律に詳しい、口の堅い相談役です。
+ユーザーが投げた具体的な状況に対し、日本の現行法（未成年飲酒禁止法・たばこ事業法・健康増進法・道路交通法・各種条例など）の観点で
+「アウト / グレー / セーフ」を一つ判定し、根拠と一言アドバイスを返してください。
+
+ルール:
+- verdict は必ず "アウト" / "グレー" / "セーフ" のいずれか1つ。
+- reason は 150〜250 字。「なぜそう判定したか」を平易に。
+- laws は関係しそうな法律・条文・条例の名前を簡潔に（例: "未成年者飲酒禁止法 / 健康増進法第25条 / 各自治体の路上喫煙禁止条例"）。
+- one_liner は 30〜60 字。背中を押すか止めるかの一言。
+- 過度に脅さない。事実ベースで温かく。
+- 個人を特定する情報は本文に含めない。
+- 「弁護士に相談」を雑に推奨しない。重大な刑事リスクのみ「念のため専門家へ」。
+
+返却フォーマット（厳格JSON。コードブロック禁止）:
+{"verdict": "アウト|グレー|セーフ", "reason": "...", "laws": "...", "one_liner": "..."}
+`;
+
+export async function consultLegalLine(situation: string): Promise<ConsultResult> {
+  const model = getGemini().getGenerativeModel({
+    model: "gemini-2.0-flash",
+    generationConfig: { responseMimeType: "application/json" },
+  });
+  const res = await model.generateContent([
+    { text: CONSULT_PROMPT },
+    { text: `\nユーザーの状況:\n${situation}` },
+  ]);
+  const json = JSON.parse(res.response.text());
+  const verdict = json.verdict === "アウト" || json.verdict === "グレー" || json.verdict === "セーフ"
+    ? json.verdict
+    : "グレー";
+  return {
+    verdict,
+    reason: typeof json.reason === "string" ? json.reason : "判定できなかったちゃむ。",
+    laws: typeof json.laws === "string" ? json.laws : "",
+    one_liner: typeof json.one_liner === "string" ? json.one_liner : "",
+  };
+}
