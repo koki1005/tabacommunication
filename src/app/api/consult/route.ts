@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { consultLegalLine } from "@/lib/gemini";
+import { consultLegalLine, SafetyBlockedError } from "@/lib/gemini";
 
 export async function POST(req: Request) {
   let payload: { situation?: string };
@@ -21,6 +21,12 @@ export async function POST(req: Request) {
     const result = await consultLegalLine(situation);
     return NextResponse.json({ ok: true, ...result });
   } catch (e: unknown) {
+    if (e instanceof SafetyBlockedError) {
+      return NextResponse.json(
+        { error: "この内容は AI 側で受け付けられなかったちゃむ。表現をやわらかく言い換えて、もう一度試してほしいちゃむ。" },
+        { status: 400 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "gemini error";
     return NextResponse.json({ error: `AI 呼び出し失敗ちゃむ: ${msg}` }, { status: 502 });
   }

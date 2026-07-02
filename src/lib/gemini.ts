@@ -1,4 +1,9 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  GoogleGenerativeAI,
+  HarmBlockThreshold,
+  HarmCategory,
+  type GenerateContentResult,
+} from "@google/generative-ai";
 
 let cached: GoogleGenerativeAI | null = null;
 
@@ -7,6 +12,53 @@ export function getGemini() {
   if (!key) throw new Error("GEMINI_API_KEY is not set");
   if (!cached) cached = new GoogleGenerativeAI(key);
   return cached;
+}
+
+export const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+];
+
+export class SafetyBlockedError extends Error {
+  constructor(reason?: string) {
+    super(reason ? `SAFETY_BLOCKED:${reason}` : "SAFETY_BLOCKED");
+    this.name = "SafetyBlockedError";
+  }
+}
+
+function extractText(res: GenerateContentResult): string {
+  const promptBlock = res.response.promptFeedback?.blockReason;
+  if (promptBlock) throw new SafetyBlockedError(String(promptBlock));
+  const finish = res.response.candidates?.[0]?.finishReason;
+  if (finish && finish !== "STOP" && finish !== "MAX_TOKENS") {
+    throw new SafetyBlockedError(String(finish));
+  }
+  const text = res.response.text();
+  if (!text || !text.trim()) throw new SafetyBlockedError("EMPTY");
+  return text;
+}
+
+function parseFirstJson(text: string): unknown {
+  const start = text.indexOf("{");
+  if (start === -1) throw new Error("no json object in response");
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return JSON.parse(text.slice(start, i + 1));
+    }
+  }
+  throw new Error("unterminated json object in response");
 }
 
 export type PolishResult = {
@@ -41,13 +93,19 @@ export async function polishPost(input: string): Promise<PolishResult> {
   const model = getGemini().getGenerativeModel({
     model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
+    safetySettings: SAFETY_SETTINGS,
   });
   const res = await model.generateContent([
     { text: POLISH_PROMPT },
     { text: `\nユーザー投稿:\n${input}` },
   ]);
-  const text = res.response.text();
-  const json = JSON.parse(text);
+  const text = extractText(res);
+  const json = parseFirstJson(text) as {
+    body?: unknown;
+    is_health_note?: unknown;
+    rejected?: unknown;
+    reason?: unknown;
+  };
   return {
     body: typeof json.body === "string" ? json.body : input,
     is_health_note: !!json.is_health_note,
@@ -84,21 +142,27 @@ const FACTCHECK_PROMPT = `あなたは一般教養レベルのファクトチェ
 `;
 
 export async function factcheckColumn(title: string, body: string): Promise<string> {
-  const model = getGemini().getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+  const model = getGemini().getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    safetySettings: SAFETY_SETTINGS,
+  });
   const res = await model.generateContent([
     { text: FACTCHECK_PROMPT },
     { text: `\nタイトル: ${title}\n本文:\n${body}` },
   ]);
-  return res.response.text().trim();
+  return extractText(res).trim();
 }
 
 export async function summarizeThreads(bodies: string[]): Promise<string> {
-  const model = getGemini().getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+  const model = getGemini().getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    safetySettings: SAFETY_SETTINGS,
+  });
   const res = await model.generateContent([
     { text: SUMMARY_PROMPT },
     { text: `\n投稿:\n${bodies.map((b, i) => `(${i + 1}) ${b}`).join("\n")}` },
   ]);
-  return res.response.text().trim();
+  return extractText(res).trim();
 }
 
 export type MatchPick = { id: string; reason: string };
@@ -148,6 +212,7 @@ export async function matchRecommend(
   const model = getGemini().getGenerativeModel({
     model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
+    safetySettings: SAFETY_SETTINGS,
   });
   const prompt = target === "sake" ? MATCH_PROMPT_SAKE : MATCH_PROMPT_TOBACCO;
   const res = await model.generateContent([
@@ -155,7 +220,7 @@ export async function matchRecommend(
     { text: `\nユーザー回答:\n${JSON.stringify(answers, null, 2)}` },
     { text: `\n候補銘柄（id と特徴の配列）:\n${JSON.stringify(candidates, null, 2)}` },
   ]);
-  const json = JSON.parse(res.response.text());
+  const json = parseFirstJson(extractText(res)) as { picks?: unknown };
   const picks = Array.isArray(json.picks) ? json.picks : [];
   return picks
     .filter((p: unknown): p is MatchPick =>
@@ -192,12 +257,18 @@ export async function consultLegalLine(situation: string): Promise<ConsultResult
   const model = getGemini().getGenerativeModel({
     model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
+    safetySettings: SAFETY_SETTINGS,
   });
   const res = await model.generateContent([
     { text: CONSULT_PROMPT },
     { text: `\nユーザーの状況:\n${situation}` },
   ]);
-  const json = JSON.parse(res.response.text());
+  const json = parseFirstJson(extractText(res)) as {
+    verdict?: unknown;
+    reason?: unknown;
+    laws?: unknown;
+    one_liner?: unknown;
+  };
   const verdict = json.verdict === "アウト" || json.verdict === "グレー" || json.verdict === "セーフ"
     ? json.verdict
     : "グレー";

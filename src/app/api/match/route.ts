@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { matchRecommend } from "@/lib/gemini";
+import { matchRecommend, SafetyBlockedError } from "@/lib/gemini";
 
 type MatchBody = {
   target?: "sake" | "tobacco";
@@ -57,6 +57,12 @@ export async function POST(req: Request) {
   try {
     picks = await matchRecommend(target, answers, candidates);
   } catch (e: unknown) {
+    if (e instanceof SafetyBlockedError) {
+      return NextResponse.json(
+        { error: "AI が回答を拒否したちゃむ。回答内容をやわらかく変えて、もう一度診断してほしいちゃむ。" },
+        { status: 400 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "gemini error";
     return NextResponse.json({ error: `AI 呼び出し失敗ちゃむ: ${msg}` }, { status: 502 });
   }
