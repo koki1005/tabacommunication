@@ -138,9 +138,14 @@ export function MatchClient() {
                       ? `${p.category ?? "—"} · ${p.abv ?? "—"}% · ${p.volume_ml ?? "—"}ml · ¥${p.price ?? "—"}`
                       : `T${p.tar ?? "—"} · N${p.nicotine ?? "—"} · ${p.count_per_pack ?? "—"}本 · ¥${p.price ?? "—"}`}
                   </div>
-                  <p className="text-xs leading-relaxed text-[color:var(--color-ink-200)] sm:text-sm">
-                    {p.reason}
-                  </p>
+                  <div className="mt-2 border-l-2 border-[color:var(--color-accent-strong)] bg-[color:var(--color-accent-strong)]/[0.06] px-3 py-2">
+                    <div className="mb-1 text-[10px] font-bold tracking-wider text-[color:var(--color-accent-strong)]">
+                      AI が選んだ理由
+                    </div>
+                    <p className="text-sm leading-relaxed text-[color:var(--color-ink-100)]">
+                      {p.reason}
+                    </p>
+                  </div>
                   <Link
                     href={`/${target}/${p.id}`}
                     className="inline-block pt-1 text-[11px] font-semibold text-[color:var(--color-accent-strong)] hover:underline"

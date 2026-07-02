@@ -39,7 +39,7 @@ const POLISH_PROMPT = `あなたは匿名掲示板のモデレーター兼整文
 
 export async function polishPost(input: string): Promise<PolishResult> {
   const model = getGemini().getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
   });
   const res = await model.generateContent([
@@ -84,7 +84,7 @@ const FACTCHECK_PROMPT = `あなたは一般教養レベルのファクトチェ
 `;
 
 export async function factcheckColumn(title: string, body: string): Promise<string> {
-  const model = getGemini().getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = getGemini().getGenerativeModel({ model: "gemini-2.5-flash-lite" });
   const res = await model.generateContent([
     { text: FACTCHECK_PROMPT },
     { text: `\nタイトル: ${title}\n本文:\n${body}` },
@@ -93,7 +93,7 @@ export async function factcheckColumn(title: string, body: string): Promise<stri
 }
 
 export async function summarizeThreads(bodies: string[]): Promise<string> {
-  const model = getGemini().getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = getGemini().getGenerativeModel({ model: "gemini-2.5-flash-lite" });
   const res = await model.generateContent([
     { text: SUMMARY_PROMPT },
     { text: `\n投稿:\n${bodies.map((b, i) => `(${i + 1}) ${b}`).join("\n")}` },
@@ -103,29 +103,38 @@ export async function summarizeThreads(bodies: string[]): Promise<string> {
 
 export type MatchPick = { id: string; reason: string };
 
-const MATCH_PROMPT_SAKE = `あなたは一人暮らし大学生に酒を勧める優しい先輩です。
+const MATCH_PROMPT_SAKE = `あなたは一人暮らし大学生に酒を勧める、ちょっと語りたがりの先輩です。
 ユーザーの回答と、候補銘柄リスト（id と特徴）を読み、最も合いそうな TOP3 を選び、
-それぞれ「なぜ合うか」を 60〜100 字で日本語で説明してください。
+それぞれ「なぜこの銘柄を選んだか」を 80〜120 字で書いてください。
+
+理由の書き方（超重要）:
+- 必ずユーザーの回答の具体的な選択肢を1つ以上引用して結びつける。例:「"甘い" を選んだから〜」「予算 "〜300円" にちょうど収まるし〜」
+- 銘柄の特徴（度数・味・タール・価格など）と回答をどう結んで選んだかを一言で説明する
+- ガチャっぽく、ちょっと語り口を軽めに。「刺さるはず」「意外と合う」「らしいチョイス」みたいな温度感でOK
+- 押し売り・警告は不要
 
 ルール:
 - 候補リストにある id だけを使う。新しい id を作らない。
 - TOP3 を必ず3件返す（候補が3件未満なら全件）。
-- 押し売りせず、初心者でも安心できる温度で書く。
-- 健康・依存に踏み込み過ぎない。
 
 返却フォーマット（厳格JSON。コードブロック禁止）:
 {"picks": [{"id": "uuid", "reason": "..."}, ...]}
 `;
 
-const MATCH_PROMPT_TOBACCO = `あなたは一人暮らし大学生にタバコを勧める落ち着いた先輩です。
+const MATCH_PROMPT_TOBACCO = `あなたは一人暮らし大学生にタバコを勧める、落ち着いた語り口の先輩です。
 ユーザーの回答と、候補銘柄リスト（id と特徴）を読み、最も合いそうな TOP3 を選び、
-それぞれ「なぜ合うか」を 60〜100 字で日本語で説明してください。
+それぞれ「なぜこの銘柄を選んだか」を 80〜120 字で書いてください。
+
+理由の書き方（超重要）:
+- 必ずユーザーの回答の具体的な選択肢を1つ以上引用して結びつける。例:「"軽めがいい" だからタール1mg帯の〜」「"人と話しながら" ならこの銘柄が〜」
+- 銘柄の特徴（タール・ニコチン・価格・傾向）と回答をどう結んで選んだかを一言で説明する
+- ガチャっぽく、ちょっと語り口を軽めに。「相性いい」「意外な当たり」「らしい一箱」みたいな温度感でOK
+- 依存・健康への過度な警告は不要
+- 法律・年齢前提（20歳以上）は守る。未成年勧誘の文面にしない。
 
 ルール:
 - 候補リストにある id だけを使う。新しい id を作らない。
 - TOP3 を必ず3件返す（候補が3件未満なら全件）。
-- 「合う/合わない」の理由を端的に。依存・健康への過度な警告は不要。
-- 法律・年齢前提（20歳以上）は守る。未成年勧誘の文面にしない。
 
 返却フォーマット（厳格JSON。コードブロック禁止）:
 {"picks": [{"id": "uuid", "reason": "..."}, ...]}
@@ -137,7 +146,7 @@ export async function matchRecommend(
   candidates: Array<Record<string, unknown> & { id: string; name: string }>,
 ): Promise<MatchPick[]> {
   const model = getGemini().getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
   });
   const prompt = target === "sake" ? MATCH_PROMPT_SAKE : MATCH_PROMPT_TOBACCO;
@@ -181,7 +190,7 @@ const CONSULT_PROMPT = `あなたは日本の酒・タバコ周りの法律に�
 
 export async function consultLegalLine(situation: string): Promise<ConsultResult> {
   const model = getGemini().getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash-lite",
     generationConfig: { responseMimeType: "application/json" },
   });
   const res = await model.generateContent([
